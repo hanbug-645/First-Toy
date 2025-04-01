@@ -12,4 +12,8 @@ This project was initialized on April 1, 2025.
 
 ## Author
 
-{{ ... }}
+Hanbug
+
+## Last Updated
+
+Added this section to practice Git workflow.
