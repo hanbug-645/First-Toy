@@ -1,9 +1,9 @@
 class Candy {
-    constructor(x, y, z, color) {
+    constructor(x, y, z, texture) {
         this.x = x;
         this.y = y;
         this.z = z;
-        this.color = color;
+        this.texture = texture;
         this.mesh = this.createMesh();
         this.outline = this.createOutline();
         this.mesh.add(this.outline);
@@ -13,7 +13,7 @@ class Candy {
     createMesh() {
         const geometry = new THREE.CircleGeometry(40, 32);
         const material = new THREE.MeshBasicMaterial({
-            color: this.color,
+            map: this.texture,
             side: THREE.DoubleSide
         });
         const mesh = new THREE.Mesh(geometry, material);
@@ -79,18 +79,37 @@ class CandyCrush3D {
         this.matches = 0;
         this.maxMatches = 15;
         this.selectedCandy = null;
-        this.colors = [
-            0xff0000, // Red
-            0x00ff00, // Green
-            0x0000ff, // Blue
-            0xffff00, // Yellow
-            0xff00ff, // Purple
-            0x00ffff  // Cyan
+        this.textures = [];
+        this.textureLoader = new THREE.TextureLoader();
+
+        // Load candy textures
+        const candyImages = [
+            'candies/1.jpeg',
+            'candies/2.jpeg',
+            'candies/3.jpeg',
+            'candies/4.jpeg',
+            'candies/5.jpeg',
+            'candies/6.jpeg'
         ];
 
-        this.initGame();
-        this.setupEventListeners();
-        this.animate();
+        // Load all textures
+        Promise.all(candyImages.map(image => 
+            new Promise((resolve, reject) => {
+                this.textureLoader.load(image, texture => {
+                    texture.minFilter = THREE.LinearFilter;
+                    texture.magFilter = THREE.LinearFilter;
+                    texture.generateMipmaps = false;
+                    this.textures.push(texture);
+                    resolve();
+                }, undefined, reject);
+            })
+        )).then(() => {
+            this.initGame();
+            this.setupEventListeners();
+            this.animate();
+        }).catch(error => {
+            console.error('Error loading textures:', error);
+        });
     }
 
     setupCamera() {
@@ -143,27 +162,86 @@ class CandyCrush3D {
         const aspect = window.innerWidth / window.innerHeight;
         const spacing = 100;
         const gridWidth = this.gridSize * spacing;
-        const gridHeight = this.gridSize * spacing;
         const startX = -gridWidth / 2 + spacing / 2;
-        const startY = -gridHeight / 2 + spacing / 2;
+        const startY = -gridWidth / 2 + spacing / 2;
 
+        // Create initial grid
         for (let x = 0; x < this.gridSize; x++) {
             for (let y = 0; y < this.gridSize; y++) {
                 const candy = new Candy(
                     startX + x * spacing,
                     startY + y * spacing,
                     0,
-                    this.getRandomColor()
+                    this.getRandomTexture(x, y)
                 );
                 candy.position = { x, y };
                 this.candies.push(candy);
                 this.scene.add(candy.mesh);
             }
         }
+
+        // Ensure no matches exist
+        while (true) {
+            const matches = this.checkForMatches();
+            if (matches.length === 0) break;
+
+            // If matches found, regenerate that row/column
+            for (const candy of matches) {
+                const { x, y } = candy.position;
+                const newCandy = new Candy(
+                    startX + x * spacing,
+                    startY + y * spacing,
+                    0,
+                    this.getRandomTexture(x, y)
+                );
+                newCandy.position = { x, y };
+                
+                // Remove old candy and add new one
+                this.scene.remove(candy.mesh);
+                this.candies = this.candies.filter(c => c !== candy);
+                
+                this.scene.add(newCandy.mesh);
+                this.candies.push(newCandy);
+            }
+        }
     }
 
-    getRandomColor() {
-        return this.colors[Math.floor(Math.random() * this.colors.length)];
+    getRandomTexture(x = -1, y = -1) {
+        if (x === -1 || y === -1) {
+            return this.textures[Math.floor(Math.random() * this.textures.length)];
+        }
+
+        // Get textures of all adjacent candies
+        const adjacentTextures = [];
+        const directions = [
+            { dx: -1, dy: 0 }, // left
+            { dx: 1, dy: 0 },  // right
+            { dx: 0, dy: -1 }, // up
+            { dx: 0, dy: 1 }   // down
+        ];
+
+        for (const { dx, dy } of directions) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx >= 0 && nx < this.gridSize && ny >= 0 && ny < this.gridSize) {
+                const candy = this.candies.find(c => c.position.x === nx && c.position.y === ny);
+                if (candy) {
+                    adjacentTextures.push(candy.texture.image.src);
+                }
+            }
+        }
+
+        // Get all textures that are not adjacent
+        const availableTextures = this.textures.filter(texture => 
+            !adjacentTextures.includes(texture.image.src)
+        );
+
+        // If no available textures, just pick any
+        if (availableTextures.length === 0) {
+            return this.textures[Math.floor(Math.random() * this.textures.length)];
+        }
+
+        return availableTextures[Math.floor(Math.random() * availableTextures.length)];
     }
 
     onCanvasClick(event) {
@@ -262,7 +340,8 @@ class CandyCrush3D {
                 const candy3 = this.candies.find(c => c.position.x === x + 2 && c.position.y === y);
 
                 if (candy1 && candy2 && candy3 &&
-                    candy1.color === candy2.color && candy2.color === candy3.color) {
+                    candy1.texture.image.src === candy2.texture.image.src &&
+                    candy2.texture.image.src === candy3.texture.image.src) {
                     matches.add(candy1);
                     matches.add(candy2);
                     matches.add(candy3);
@@ -278,7 +357,8 @@ class CandyCrush3D {
                 const candy3 = this.candies.find(c => c.position.x === x && c.position.y === y + 2);
 
                 if (candy1 && candy2 && candy3 &&
-                    candy1.color === candy2.color && candy2.color === candy3.color) {
+                    candy1.texture.image.src === candy2.texture.image.src &&
+                    candy2.texture.image.src === candy3.texture.image.src) {
                     matches.add(candy1);
                     matches.add(candy2);
                     matches.add(candy3);
@@ -311,7 +391,7 @@ class CandyCrush3D {
                             await dropCandy.animateMove(
                                 startX + x * spacing,
                                 startY + y * spacing,
-                                300
+                                100
                             );
                             break;
                         }
@@ -328,7 +408,7 @@ class CandyCrush3D {
                         startX + x * spacing,
                         startY + y * spacing + gridWidth, // Start above the grid
                         0,
-                        this.getRandomColor()
+                        this.getRandomTexture(x, y)
                     );
                     newCandy.position = { x, y };
                     this.candies.push(newCandy);
@@ -336,7 +416,7 @@ class CandyCrush3D {
                     await newCandy.animateMove(
                         startX + x * spacing,
                         startY + y * spacing,
-                        300
+                        50
                     );
                 }
             }
